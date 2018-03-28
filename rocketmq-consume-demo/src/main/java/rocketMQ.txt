@@ -1,0 +1,40 @@
+      消息重试机制。顺序消费，事务消费(3.0.8)，并发能力强   消息堆积能力。 broke + nameserver
+1,消费方式：默认支持集群消费(负载均衡)。广播消费--1-多。
+  consumer.setMessageModel(MessageModel.BROADCASTING);设置消费模式CLUSTERING(集群)
+2,失败重试机制：
+  1,produce端发送到MQ-broker失败。ConsumeConcurrentlyStatus.CONSUME_SUCCESS
+  2,consumer端消费时，抛出异常。(未返回成功标示)
+3,双master模式。若produce已经发送消息到broker。---master一端挂掉，只能等待master启动,consumer才能消费。
+  (因此需要多主 多从模式,保证数据实时消费)
+4,多主 多从模式,slave 只能接受consumer消费端请求。无法接受produce数据来源。--开源版本slave-无法切换master
+5,数据永远持久化,存放在/usr/local/rocketmq/store/commitlog下。/usr/local/rocketmq/store/consumequeue 存放是消费者消费的index
+6,无法处理消息的重复消费情况。(根据业务key自己过滤处理,--数据幂等性)
+7,顺序消费---原理：
+       生产者:相同topic下有4个默认队列(可创建多个。支持上万个队列),把一组消费顺序业务(订单),放入一个队列中。
+     	 保证其安装顺序消费。--(订单是一个业务，所以订单都到一个topic下,)
+      消费者: MessageListenerOrderly接口已经实现单线程处理一个queue,(其他线程无法处理其他的queue)这样确保一个queue不能多线程不按照顺序消费。
+8,事务消费--
+9,启动mqnamesrv
+  cd /usr/local/rocketmq/bin
+  nohup sh mqnamesrv &
+     启动BrokerServer
+  cd /usr/local/rocketmq/bin
+  nohup sh mqbroker -c /usr/local/rocketmq/conf/2m-noslave/broker-a.properties >/dev/null 2>&1 &
+  
+
+-------RocketMQ使用
+生产者：(mormalProducer 普通  orderProducer 顺序消费  TransacntionProducer 事务消费)
+1,创建DefaultMQProducer类并设定生产者名称，设置setNameseAddr,集群使用“;”隔开,调用strat方法启动即可。
+2,使用Message类进行消息实例化,参数为:主题, 标签, 内容;
+3,调用send方法发送消息,并且关闭生产者。
+消费者：
+1,创建DefaultMQPushConsume类并设定生产者名称，设置setNameseAddr,集群使用“;”隔开.
+2,设置DefaultMQPushConsume实例的订阅主题,一个消费者对象可以订阅多个主题,使用subsribe方法订阅（参数1 主题名称 参数2 标签内容,可用 || 对标签内容进行合并）
+3,消费者实例进行注册监听：设置registerMessageListener方法。
+4,监听类实现MessageListenerConcurrently接口即可,重写consumeMessage方法接受数据
+-- 默认16次
+ ConsumeConcurrentlyStatus.RECONSEUM_LATER (try异常,进行重试机制。可以判断他重试次数，进行业务逻辑处理。记录日志。)
+ ConsumeConcurrentlyStatus.RECONSEUM_SUCCESS
+     如果业务的回调没有处理好而抛出异常，会认为是消费失败当ConsumeConcurrentlyStatus.RECONSUME_LATER处理。
+     当使用顺序消费的回调MessageListenerOrderly时，由于顺序消费是要前者消费成功才能继续消费，所以没有RECONSUME_LATER的这个状态，只有SUSPEND_CURRENT_QUEUE_A_MOMENT来暂停队列的其余消费，直到原消息不断重试成功为止才能继续消费。
+5,启动消费者实例对象,调用start
